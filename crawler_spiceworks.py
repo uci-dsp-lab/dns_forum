@@ -19,7 +19,7 @@ import pymongo
 # imports for parser
 import cloudflare_parser
 
-class Crawler_github:
+class Crawler_spice:
     def __init__(self):
         self.pid = 0
         self.crawled_count = 0
@@ -45,16 +45,14 @@ class Crawler_github:
         self.pure_collection_external = None
 
         self.already_met = defaultdict(int)
-        self.closed = True
 
-    def start_crawling(self, current_url, pageNum, closed):
-        self.closed = closed
+    def start_crawling(self, current_url, pageNum):
         self.pid = os.getpid()
         print("PID {2} | Crawling URL: {0} Crawled: {1}".format(current_url, self.crawled_count, self.pid))
         self.crawled_count += 1
 
         client = pymongo.MongoClient(host="localhost", port=27017)
-        db = client.github_crawled_data_Unbound
+        db = client.Spiceworks_crawled_data
 
         collection_name = "page" + str(pageNum)
 
@@ -67,9 +65,7 @@ class Crawler_github:
         self.pure_collection_external = db["pure" + "_" + collection_name + "_external"]
 
         url_queue = self.extract_next_urls(current_url)
-        for url_info in url_queue:
-
-            real_url, id = url_info[0], url_info[1]
+        for real_url in url_queue:
 
             print("PID {2} | Crawling URL: {0} Crawled: {1}".format(real_url, self.crawled_count, self.pid))
             url_response = self.handle_url(real_url, 0)
@@ -148,21 +144,21 @@ class Crawler_github:
             self.handle_url_helper(current_url, isExternal)
 
     def store_crawled_data(self, url_response, id, real_url):
-        refiner = refiner_github(url_response, real_url)
+        refiner = refiner_spice(url_response, real_url)
         refiner.refine()
         title = refiner.title
         insert_to_db_raw = {"title": title,
                             "url": real_url,
-                            "closed": True if self.closed else False,
+                            "closed": True if refiner.closed else False,
                             "raw_content": url_response.text}
         self.raw_collection.insert_one(insert_to_db_raw)
 
         insert_to_db_refined = {"title": title,
                         "url": real_url,
-                        "closed": True if self.closed else False}
+                        "closed": True if refiner.closed else False}
         insert_to_db_pure = {"title": title,
                              "url": real_url,
-                             "closed": True if self.closed else False,}
+                             "closed": True if refiner.closed else False,}
 
         index, user_list = 0, []
         original_post, created_date = "", ""
@@ -224,26 +220,13 @@ class Crawler_github:
 
         res = []
         soup = BeautifulSoup(url_response.text, "lxml")
-        visited, required, base_url = defaultdict(int), "NLnetLabs/unbound/issues/", "https://github.com/NLnetLabs/unbound/issues"
-        urlcontainer = soup.findAll("a")
-        for anchor in urlcontainer:
-            new_url = anchor.get("href")
 
-            if visited[new_url] == 1 or "?" in new_url:
-                continue
+        base_url = "https://community.spiceworks.com/topic/"
+        divs = soup.find_all("div", {"class" : "listing__info"})
+        for div in divs:
+            abs_url = parse.urljoin(base_url, div.find("a").get("href"))
+            res.append(abs_url)
 
-            id = ""
-            for i in range(len(new_url)-1, -1, -1):
-                if new_url[i] == "/":
-                    break
-                id = new_url[i] + id
-
-            if visited[id] == 1 or required not in new_url:
-                continue
-
-            visited[new_url] = 1
-            abs_url = parse.urljoin(base_url, new_url)
-            res.append([abs_url, id])
         return res
 
     def external_crawl(self, included_url):
@@ -311,7 +294,7 @@ class Crawler_github:
 
 
 # A simple refiner that retrieves the post contents from the HTML file.
-class refiner_github:
+class refiner_spice:
     def __init__(self, html_response, cur_url):
         self.response = html_response
         self.cur_url = cur_url
@@ -319,86 +302,97 @@ class refiner_github:
         self.post_content = ""
         self.refined_content = []
         self.included_url = []
-        self.disallow = ["/pulse", "/tree/", "/wiki", "/gist/",
-                         "/forks", "/stars", "/download", "/revisions", "/issues/new",
-                         "/issues/search", "/commits/", "/branches", "/tags", "/contributors",
-                         "/comments", "/stargazers", "/archive/", "/blame/", "/watchers",
-                         "/network", "/graphs", "/raw/", "/compare/", "/cache/", "/.git/",
-                         "/search/advanced"]
+        self.headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+                       "Accept-Language": "en-US;q=0.9,en;q=0.8"}
+        self.closed = False
+
+    def handle_post(self, divs, firstPage):
+        if firstPage:
+            divs = divs[1:]
+
+        for div in divs:
+            try:
+                user = user = div.find("a").text.strip()
+            except:
+                user = "Permanently-Deleted-User"
+            date = div.find("span", {"data-js-postprocess": "timestamp"}).text.strip()
+            comment = div.find("div", {"class" : "post-body"}).text.strip()
+
+            self.refined_content.append([user, date, comment])
+
+    def get_long_response(self, long_url):
+        try:
+            print("------- | Crawling Long-post URL: {0}".format(long_url))
+            long_response = r.get(long_url, timeout=20, headers=self.headers)
+            return long_response
+        except:
+            print("------- | Retrying Long-post URL: {0}".format(long_url))
+            time.sleep(25)
+            return self.get_long_response(long_url)
+
+    def handle_long_post(self, soup1):
+        try:
+            self.title = soup1.title.string
+        except:
+            self.title = "Title: Unknown"
+
+        divs = soup1.find_all("div", {"class" : "post-content"})
+        self.handle_post(divs, False)
+
+        long_post = soup1.find("nav", {"class" : "sui-pagination"})
+        base_url = "https://community.spiceworks.com/topic/"
+
+        while long_post:
+            new_url = long_post.find("a").get("href")
+            abs_url = parse.urljoin(base_url, new_url)
+            response_long = self.get_long_response(abs_url)
+
+            soupk = BeautifulSoup(response_long.text, "lxml")
+            d = soupk.find_all("div", {"class" : "post-content"})
+            self.handle_post(d, False)
+            long_post = soupk.find("nav", {"class" : "sui-pagination"})
 
     def refine(self):
         soup1 = BeautifulSoup(self.response.text, "lxml")
+        self.closed = "locked" in soup1.find_all("div", {"class" : "sui-alert_text"})[-1].text
 
         try:
             self.title = soup1.title.string
         except:
             self.title = "Title: Unknown"
 
-        divs = soup1.find_all("div", {"class": "js-quote-selection-container"})
-        self.post_content = str(divs)
-
-        user_container = soup1.find_all("a", {"class":"d-inline-block d-md-none"})
-        date_container = soup1.find_all("a", {"class":"Link--secondary js-timestamp"})
-        post_container = soup1.find_all("td", {"class":"d-block comment-body markdown-body js-comment-body"})
-
-        if (len(user_container) + len(date_container) + len(post_container)) != len(user_container) * 3:
-            print("Refiner_Github: Format Error.")
+        long_post = soup1.find("nav", {"class" : "sui-pagination"})
+        if long_post:
+            self.handle_first_page(soup1)
+            self.handle_long_post(soup1)
         else:
-            for i in range(len(user_container)):
-                user = user_container[i]["href"][1:].strip()
-                date = date_container[i].text.strip()
-                post = post_container[i].text.strip()
+            self.handle_first_page(soup1)
+            divs = soup1.find_all("div", {"class" : "post-content"})
+            self.handle_post(divs, False)
 
-                self.refined_content.append([user, date, post])
+    def handle_first_page(self, soup):
+        mainPost = json.loads(soup.find("script", {"data-config": "topicData"}).contents[0])
+        main = mainPost["subject"]
+        author = mainPost["author_name"]
+        create_date = soup.find("span", {"data-js-postprocess": "timestamp"}).text
 
-        soup2 = BeautifulSoup(self.post_content, "lxml")
-        for anchor in soup2.find_all("a"):
-            new_url = anchor.get("href")
+        self.refined_content.append([author, create_date, main])
 
-            if not new_url:
-                continue
-
-            disallowed = False
-            for disallow_element in self.disallow:
-                if disallow_element in new_url:
-                    disallowed = True
-
-            if disallowed == True:
-                continue
-
-            if new_url.find("http") != 0:
-                continue
-
-            self.included_url.append(new_url)
-            print(new_url)
-
-
-def crawl_multiP(url, pageNum, closed):
-    myCrawler = Crawler_github()
-    myCrawler.start_crawling(url, pageNum, closed)
-
+def crawl_multiP(url, pageNum):
+    myCrawler = Crawler_spice()
+    myCrawler.start_crawling(url, pageNum)
 
 if __name__ == "__main__":
     cpu_num = multiprocessing.cpu_count()
     P_pool = Pool(cpu_num)
 
-    # for pageNum in range(1, 10): # Closed posts in the last year
-
     #pageNum for crawling
-    # for pageNum in range(1, 2):
-    #     url = "https://github.com/NLnetLabs/unbound/issues?page={0}&q=is%3Aissue+is%3Aclosed".format(pageNum)
-    #     P_pool.apply_async(crawl_multiP, args=(url, pageNum, True, ))
-    #     time.sleep(8)
-    #
-    # # for pageNum in range(1, 2):
-    # #     url = "https://github.com/PowerDNS/pdns/issues?page={0}&q=is%3Aopen+is%3Aissue".format(pageNum)
-    # #     P_pool.apply_async(crawl_multiP, args=(url, pageNum, False, ))
-    # #     time.sleep(8)
-    #
-    # P_pool.close()
-    # P_pool.join()
 
-    url = "https://github.com/NLnetLabs/unbound/issues?page={0}&q=is%3Aissue+is%3Aclosed".format(1)
-    myCrawler = Crawler_github()
-    myCrawler.start_crawling(url, 1, True)
+    for page in range(1, 5):
+        url = "https://community.spiceworks.com/networking/dns?filter=popular&page={0}".format(page)
+        P_pool.apply_async(crawl_multiP, args=(url, page,))
+        time.sleep(8)
 
+    P_pool.close()
+    P_pool.join()

@@ -7,6 +7,7 @@ import multiprocessing
 from multiprocessing import Pool
 
 from collections import deque, defaultdict
+import random
 
 # imports for the parser
 from bs4 import BeautifulSoup
@@ -18,8 +19,7 @@ import pymongo
 # imports for parser
 import cloudflare_parser
 
-
-class Crawler_cloudflare:
+class Crawler_github:
     def __init__(self):
         self.pid = 0
         self.crawled_count = 0
@@ -28,9 +28,6 @@ class Crawler_cloudflare:
         self.header = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
                        "Accept-Language": "en-US;q=0.9,en;q=0.8"}
-        self.json_header = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-                            "Accept": "application/json"}
 
         self.failed_queue = deque([])
         self.external_failed_queue = deque([])
@@ -48,33 +45,31 @@ class Crawler_cloudflare:
         self.pure_collection_external = None
 
         self.already_met = defaultdict(int)
+        self.closed = True
 
-    def start_crawling(self, current_url):
+    def start_crawling(self, current_url, pageNum, closed):
+        self.closed = closed
         self.pid = os.getpid()
         print("PID {2} | Crawling URL: {0} Crawled: {1}".format(current_url, self.crawled_count, self.pid))
         self.crawled_count += 1
 
-        index = -1
-        while current_url[index] != "=":
-            self.json_page_num = current_url[index] + self.json_page_num
-            index -= 1
-
         client = pymongo.MongoClient(host="localhost", port=27017)
-        db = client.cloudflare_crawled_data
-        collection_name = "page" + self.json_page_num
+        db = client.github_crawled_data_Unbound
 
-        self.refined_collection = db["refined" + collection_name]
-        self.raw_collection = db["raw" + collection_name]
-        self.pure_collection = db["pure" + collection_name]
+        collection_name = "page" + str(pageNum)
 
-        self.refined_collection_external = db["refined" + collection_name + "_external"]
-        self.raw_collection_external = db["raw" + collection_name + "_external"]
-        self.pure_collection_external = db["pure" + collection_name + "_external"]
+        self.refined_collection = db["refined" + "_" + collection_name]
+        self.raw_collection = db["raw" + "_" + collection_name]
+        self.pure_collection = db["pure" + "_" + collection_name]
+
+        self.refined_collection_external = db["refined" + "_" + collection_name + "_external"]
+        self.raw_collection_external = db["raw" + "_" + collection_name + "_external"]
+        self.pure_collection_external = db["pure" + "_" + collection_name + "_external"]
 
         url_queue = self.extract_next_urls(current_url)
         for url_info in url_queue:
 
-            real_url, id, slug = url_info[0], url_info[1], url_info[2]
+            real_url, id = url_info[0], url_info[1]
 
             print("PID {2} | Crawling URL: {0} Crawled: {1}".format(real_url, self.crawled_count, self.pid))
             url_response = self.handle_url(real_url, 0)
@@ -83,27 +78,19 @@ class Crawler_cloudflare:
             if not url_response:
                 continue
 
-            self.store_crawled_data(url_response, id, slug, real_url)
+            self.store_crawled_data(url_response, id, real_url)
 
         self.retry()
 
-    def get_slug_id(self, url_retry):
-        id, slug, index, slashCount = "", "", -1, 0
-        while slashCount != 2:
-            if slashCount == 0 and url_retry[index] != "/":
-                id = url_retry[index] + id
-            if slashCount == 1 and url_retry[index] != "/":
-                slug = url_retry[index] + slug
-            if url_retry[index] == "/":
-                slashCount += 1
-            index -= 1
-
-        return id, slug
 
     def retry(self):
         while self.failed_queue:
             url_retry = self.failed_queue.popleft()
-            id, slug = self.get_slug_id(url_retry)
+            id = ""
+            for i in range(len(url_retry) - 1, -1, -1):
+                if url_retry[i] == "/":
+                    break
+                id = url_retry[i] + id
 
             print("PID {2} | Retrying URL: {0} Retried times: {1}".format(url_retry, self.failed_dict[url_retry], self.pid))
             self.failed_dict[url_retry] += 1
@@ -113,7 +100,7 @@ class Crawler_cloudflare:
             if not url_response:
                 continue
 
-            self.store_crawled_data(url_response, id, slug, url_retry)
+            self.store_crawled_data(url_response, id, url_retry)
 
     def retry_url_helper(self, url_retry, isExternal):
         if isExternal == 0:
@@ -122,7 +109,7 @@ class Crawler_cloudflare:
             else:
                 print("PID {1} | Retry for URL: {0} FAILED.".format(url_retry, self.pid))
         else:
-            if self.external_failed_dict[url_retry] < 2:
+            if self.external_failed_dict[url_retry] < 3:
                 self.external_failed_queue.append(url_retry)
             else:
                 print("PID {1} | Retry for External URL: {0} FAILED.".format(url_retry, self.pid))
@@ -160,24 +147,22 @@ class Crawler_cloudflare:
             print("PID {2} | Failed to Crawl: {0}, Error Message: {1}".format(current_url, r.exceptions.ConnectionError.args, self.pid))
             self.handle_url_helper(current_url, isExternal)
 
-    def store_crawled_data(self, url_response, id, slug, real_url):
-        title = slug + "_" + str(id)
+    def store_crawled_data(self, url_response, id, real_url):
+        refiner = refiner_github(url_response, real_url)
+        refiner.refine()
+        title = refiner.title
         insert_to_db_raw = {"title": title,
                             "url": real_url,
+                            "closed": True if self.closed else False,
                             "raw_content": url_response.text}
         self.raw_collection.insert_one(insert_to_db_raw)
 
-
-        refiner = refiner_cloudflare(url_response, real_url, self.header)
-        refiner.refine()
         insert_to_db_refined = {"title": title,
                         "url": real_url,
-                        "closed": refiner.closed}
-
+                        "closed": True if self.closed else False}
         insert_to_db_pure = {"title": title,
                              "url": real_url,
-                             "closed": refiner.closed}
-
+                             "closed": True if self.closed else False,}
 
         index, user_list = 0, []
         original_post, created_date = "", ""
@@ -186,6 +171,7 @@ class Crawler_cloudflare:
             user = info[0].replace(".", "_")
             if user not in user_list:
                 user_list.append(user)
+
             if index == 0:
                 original_post = info[2]
                 created_date = info[1]
@@ -197,7 +183,6 @@ class Crawler_cloudflare:
 
                 replies[user].append({"date" : info[1],
                                       "reply" : info[2]})
-
                 cParser = cloudflare_parser.HTML_DataHandler()
                 pure_content = cParser.handle_htmldata(info[2])
                 replies_pure[user].append({"date" : info[1],
@@ -211,6 +196,7 @@ class Crawler_cloudflare:
         insert_to_db_refined["replies"] = {}
         for r in replies:
             insert_to_db_refined["replies"][r] = replies[r]
+        insert_to_db_refined["external_urls"] = refiner.included_url
         self.refined_collection.insert_one(insert_to_db_refined)
 
         insert_to_db_pure["user_list"] = user_list
@@ -227,26 +213,37 @@ class Crawler_cloudflare:
         # if refiner.included_url:
         #     for external_url in refiner.included_url:
         #         self.external_crawl(external_url)
-        #
         # self.retry_external()
 
-    def extract_next_urls(self, json_url):
+    def extract_next_urls(self, starting_url):
         try:
-            url_response = r.get(json_url, timeout=15, headers=self.json_header)
+            url_response = r.get(starting_url, timeout=15, headers=self.header)
         except:
-            print("Failed to crawl JSON URL: {0}, Retrying.".format(json_url))
-            return self.extract_next_urls(json_url)
+            print("Failed to crawl Starting URL: {0}, Retrying.".format(starting_url))
+            return self.extract_next_urls(starting_url)
 
-        html_str = url_response.content.decode()
-        url_data = json.loads(html_str)["topic_list"]["topics"]
+        res = []
+        soup = BeautifulSoup(url_response.text, "lxml")
+        visited, required, base_url = defaultdict(int), "NLnetLabs/unbound/issues/", "https://github.com/NLnetLabs/unbound/issues"
+        urlcontainer = soup.findAll("a")
+        for anchor in urlcontainer:
+            new_url = anchor.get("href")
 
-        res, base = [], "https://community.cloudflare.com/t/"
+            if visited[new_url] == 1 or "?" in new_url:
+                continue
 
-        for data_line in url_data:
-            id, slug = data_line["id"], data_line["slug"]
-            new_url = base + slug + "/" + str(id)
-            res.append([new_url, id, slug])
+            id = ""
+            for i in range(len(new_url)-1, -1, -1):
+                if new_url[i] == "/":
+                    break
+                id = new_url[i] + id
 
+            if visited[id] == 1 or required not in new_url:
+                continue
+
+            visited[new_url] = 1
+            abs_url = parse.urljoin(base_url, new_url)
+            res.append([abs_url, id])
         return res
 
     def external_crawl(self, included_url):
@@ -306,7 +303,7 @@ class Crawler_cloudflare:
         self.refined_collection_external.insert_one(insert_to_db_refined)
 
         cParser = cloudflare_parser.HTML_DataHandler()
-        content = cParser.handle_htmldata(pcontent)
+        content = cParser.handle_htmldata(divcontent)
         insert_to_db_pure = {"title": title,
                         "url": included_url,
                         "pure_text": content}
@@ -314,149 +311,87 @@ class Crawler_cloudflare:
 
 
 # A simple refiner that retrieves the post contents from the HTML file.
-class refiner_cloudflare:
-    def __init__(self, html_response, cur_url, headers):
+class refiner_github:
+    def __init__(self, html_response, cur_url):
         self.response = html_response
         self.cur_url = cur_url
-        self.headers = headers
+        self.title = ""
+        self.post_content = ""
         self.refined_content = []
         self.included_url = []
-        self.disallow = ["/admin/", "/auth/", "/email/", "/session",
-                         "/user-api-key", "/badges", "/u/", "/my", "/search",
-                         "/g", ".rss"]
-        self.pageCount = 2
-        self.long_posts = {}
-        self.closed = False
-
-    def refine_helper(self, divs):
-        for div in divs:
-            username = div.find("span", {"class": "creator"}).text.strip()
-            postdate = div.find("time", {"class" : "post-time"}).text.strip()
-
-            tempsoup = BeautifulSoup(str(div), "lxml")
-            post = tempsoup.find("div", {"class" : "post"}).text.strip()
-
-            self.refined_content.append([username, postdate, post])
-        return
-
-    def get_long_response(self, long_url):
-        try:
-            print("------- | Crawling Long-post URL: {0}".format(long_url))
-            long_response = r.get(long_url, timeout=20, headers=self.headers)
-            return long_response
-        except:
-            print("------- | Retrying Long-post URL: {0}".format(long_url))
-            time.sleep(25)
-            return self.get_long_response(long_url)
-
-    def handle_long_post(self):
-        soup1 = BeautifulSoup(self.response.text, "lxml")
-        divs = soup1.find_all("div", {"class": "topic-body crawler-post"})
-        if "role" in divs[-1].attrs:
-            self.refine_helper(divs[:-1])
-        else:
-            self.refine_helper(divs)
-
-        p = soup1.find_all("div", {"class": "post"})
-        self.extract_external_url(str(p))
-
-        long_div = soup1.find("div", {"role": "navigation"})
-        while long_div and "next" in long_div.text.strip():
-            long_url = self.cur_url + "?page=" + str(self.pageCount)
-            long_response = self.get_long_response(long_url)
-
-            soup_long = BeautifulSoup(long_response.text, "lxml")
-            divs_long = soup_long.find_all("div", {"class": "topic-body crawler-post"})
-
-            if "role" in divs_long[-1].attrs:
-                self.refine_helper(divs_long[:-1])
-            else:
-                self.refine_helper(divs_long)
-
-            closed_divs = soup_long.find_all("span", {"class": "creator", "itemprop": "author"})
-            if not closed_divs:
-                pass
-            else:
-                self.closed = "closed" in closed_divs[-1].text
-
-            p_long = soup_long.find_all("div", {"class": "post"})
-            self.extract_external_url(str(p_long))
-            long_div = soup_long.find("div", {"role": "navigation"})
-            self.pageCount += 1
-
+        self.disallow = ["/pulse", "/tree/", "/wiki", "/gist/",
+                         "/forks", "/stars", "/download", "/revisions", "/issues/new",
+                         "/issues/search", "/commits/", "/branches", "/tags", "/contributors",
+                         "/comments", "/stargazers", "/archive/", "/blame/", "/watchers",
+                         "/network", "/graphs", "/raw/", "/compare/", "/cache/", "/.git/",
+                         "/search/advanced"]
 
     def refine(self):
         soup1 = BeautifulSoup(self.response.text, "lxml")
 
-        long_post = False
-        check_for_long_post = soup1.find("div", {"role" : "navigation"})
-        if check_for_long_post:
-            if "next" in check_for_long_post.text.strip():
-                long_post = True
+        try:
+            self.title = soup1.title.string
+        except:
+            self.title = "Title: Unknown"
 
-        if long_post:
-            self.handle_long_post()
+        divs = soup1.find_all("div", {"class": "js-quote-selection-container"})
+        self.post_content = str(divs)
 
-        if not long_post:
-            p = soup1.find_all("div", {"class": "post"})
-            post_content_string = str(p)
+        user_container = soup1.find_all("a", {"class":"d-inline-block d-md-none"})
+        date_container = soup1.find_all("a", {"class":"Link--secondary js-timestamp"})
+        post_container = soup1.find_all("td", {"class":"d-block comment-body markdown-body js-comment-body"})
 
-            divs = soup1.find_all("div", {"class": "topic-body crawler-post"})
-            if "role" in divs[-1].attrs:
-                self.refine_helper(divs[:-1])
-            else:
-                self.refine_helper(divs)
+        if (len(user_container) + len(date_container) + len(post_container)) != len(user_container) * 3:
+            print("Refiner_Github: Format Error.")
+        else:
+            for i in range(len(user_container)):
+                user = user_container[i]["href"][1:].strip()
+                date = date_container[i].text.strip()
+                post = post_container[i].text.strip()
 
-            closed_divs = soup1.find_all("span", {"class": "creator", "itemprop": "author"})
-            if not closed_divs:
-                pass
-            else:
-                self.closed = "closed" in closed_divs[-1].text
-            self.extract_external_url(post_content_string)
+                self.refined_content.append([user, date, post])
 
-
-    def extract_external_url(self, post_content_string):
-        soup2 = BeautifulSoup(post_content_string, "lxml")
+        soup2 = BeautifulSoup(self.post_content, "lxml")
         for anchor in soup2.find_all("a"):
             new_url = anchor.get("href")
+
             if not new_url:
                 continue
 
-            abs_url = parse.urljoin(self.cur_url, new_url)
-
             disallowed = False
             for disallow_element in self.disallow:
-                if disallow_element in abs_url:
+                if disallow_element in new_url:
                     disallowed = True
 
             if disallowed == True:
                 continue
 
-            if abs_url.find("http") != 0:
+            if new_url.find("http") != 0:
                 continue
-            if abs_url not in self.included_url:
-                self.included_url.append(abs_url)
+
+            self.included_url.append(new_url)
+            print(new_url)
 
 
-def crawl_multiP(url):
-    myCrawler = Crawler_cloudflare()
-    myCrawler.start_crawling(url)
+def crawl_multiP(url, pageNum, closed):
+    myCrawler = Crawler_github()
+    myCrawler.start_crawling(url, pageNum, closed)
+
 
 if __name__ == "__main__":
     cpu_num = multiprocessing.cpu_count()
     P_pool = Pool(cpu_num)
 
-    base_url = "https://community.cloudflare.com/latest.json?no_definitions=true&page="
-    #for pageNum in range(28, 55): # Closed posts in the last month
-
-    #pageNum for crawling
-    for pageNum in range(29, 31):
-        url = base_url + str(pageNum)
-        P_pool.apply_async(crawl_multiP, args=(url,))
-        time.sleep(10)
+    # Closed pages: 1 - 9
+    for pageNum in range(1, 2):
+        url = "https://github.com/NLnetLabs/unbound/issues?page={0}&q=is%3Aissue+is%3Aclosed".format(pageNum)
+        P_pool.apply_async(crawl_multiP, args=(url, pageNum, True, ))
+        time.sleep(8)
+    # Open pages: 1 - 6
+    for pageNum in range(1, 2):
+        url = "https://github.com/NLnetLabs/unbound/issues?page={0}&q=is%3Aissue+is%3Aopen".format(pageNum)
+        P_pool.apply_async(crawl_multiP, args=(url, pageNum, False, ))
+        time.sleep(8)
 
     P_pool.close()
     P_pool.join()
-
-
-
