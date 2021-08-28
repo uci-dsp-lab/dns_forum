@@ -372,8 +372,8 @@ class refiner_spice:
             self.handle_post(divs, False)
 
     def handle_first_page(self, soup):
+        main = soup.find("div", {"class": "sui-opt-in root-post post"}).text.strip()
         mainPost = json.loads(soup.find("script", {"data-config": "topicData"}).contents[0])
-        main = mainPost["subject"]
         author = mainPost["author_name"]
         create_date = soup.find("span", {"data-js-postprocess": "timestamp"}).text
 
