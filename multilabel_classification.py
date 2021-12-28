@@ -81,7 +81,7 @@ def tag2Records(content_dict, two_grams):
         if record in two_grams or record.lower() in two_grams:
             result.add(record)
 
-        abbreviation = record.split(" ")[0]
+        abbreviation = record.split(" ")[0].lower()
         if abbreviation in content_dict:
             result.add(record)
 
@@ -89,7 +89,7 @@ def tag2Records(content_dict, two_grams):
         if record in two_grams or record.lower() in two_grams:
             result.add(record)
 
-        abbreviation = record.split(" ")[0]
+        abbreviation = record.split(" ")[0].lower()
         if abbreviation in content_dict:
             result.add(record)
 
@@ -113,8 +113,9 @@ def tag3ServerLevels(content_dict, two_grams):
 
 
 def tag4Security(content_dict):
-    keywords = ["security", "firewall", "block", "filter", "gateway", "ddos", "hijack",
-                "tunnel", "ssl", "malware", "attack"]
+    keywords = ["security", "firewall", "block", "filter", "gateway", "ddos", "dos", "hijack",
+                "tunnel", "ssl", "tls", "ssl tls", "https", "malware", "attack", "prevent", "cert", "certificate", "expose",
+                "forbid", "authentication", "protect", "phishing", "captcha"]
     for keyword in keywords:
         if keyword in content_dict:
             return True
@@ -136,6 +137,47 @@ def tag6Ip(content_dict):
         result.append("IPv4")
     if "ipv6" in content_dict:
         result.append("IPv6")
+
+    if not result and "ip" in content_dict:
+        result.append("General IP")
+    return result
+
+def tag7HTTPstatusCode(content_dict):
+    info_response = {str(_): 1 for _ in range(100, 104)}
+
+    success_response = {str(_): 1 for _ in range(200, 209)}
+    success_response.update({"226" : 1})
+
+    redir_message = {str(_): 1 for _ in range(300, 309)}
+
+    client_error = {str(_): 1 for _ in range(400, 432)}
+    not_used = ["419", "420", "427", "430"]
+    for code in not_used:
+        del client_error[code]
+    client_error["451"] = 1
+
+    servre_error = {str(_): 1 for _ in range(500, 512)}
+
+    result = []
+    for key in content_dict:
+        if key in info_response or key in success_response or key in redir_message or key in client_error or\
+            key in servre_error:
+            result.append(key)
+    return result
+
+def tag8ErrorCode(two_grams):
+    result = []
+    for bigram in two_grams:
+        if len(bigram) > 4 and bigram[:4] == "code":
+            code = None
+            try:
+                code = int(bigram[5:])
+            except:
+                pass
+
+            if code:
+                result.append(bigram)
+
     return result
 
 
@@ -149,14 +191,20 @@ def tagger(pure_content):
         categoryToPostNum["1.General"] += 1
 
     # 2.Record types
+    indicator = -1
     for record in tag2Records(content_dict, two_grams):
         labels.append(record)
+        indicator = 1
+    if indicator == 1:
         categoryToPostNum["2.Record types"] += 1
 
     # 3.Server levels
+    indicator = -1
     for level in tag3ServerLevels(content_dict, two_grams):
         labels.append(level)
-        categoryToPostNum["3 Server levels"] += 1
+        indicator = 1
+    if indicator == 1:
+        categoryToPostNum["3.Server levels"] += 1
 
     # 4.Security
     if tag4Security(content_dict):
@@ -164,16 +212,31 @@ def tagger(pure_content):
         categoryToPostNum["4.Security"] += 1
 
     # 5.Resolving Method
+    indicator = -1
     for method in tag5ResolveTypes(content_dict):
         labels.append(method)
+        indicator = 1
+    if indicator == 1:
         categoryToPostNum["5.Resolving Method"] += 1
 
     # 6.IP
+    indicator = -1
     for ip in tag6Ip(content_dict):
         labels.append(ip)
+        indicator = 1
+    if indicator == 1:
         categoryToPostNum["6.IP"] += 1
 
-    # 7.Others
+    # 7.HTTP Status Code
+    # for code in tag7HTTPstatusCode(content_dict):
+    #     labels.append(code)
+    # Temporarily disabled because of irrelevance for DNS
+
+    # 8.Error Code
+    for error_code in tag8ErrorCode(two_grams):
+        labels.append(error_code)
+
+    # Others
     if not labels:
         labels.append("Others")
         categoryToPostNum["7.Others"] += 1
