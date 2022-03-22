@@ -3,22 +3,42 @@ from nltk.stem import WordNetLemmatizer
 from collections import defaultdict
 
 def main(startPage, endPage):
+    num = 0
     client = pymongo.MongoClient(host="128.195.180.83",
                                  port=27939,
                                  username="db_writer",
                                  password="ucidsplab_dbwriter"
                                  )
-    #dblist = client.list_database_names() #print(dblist)
+
     db = client.cloudflare_crawled_data
 
+    count = []
+    dnsRelatedNum = 0
     for i in range(startPage, endPage + 1):
         col_name = "purepage" + str(i)
         collection = db[col_name]
 
         for row in collection.find():
+
             print(row["_id"])
-            filter, labels = {"_id": row["_id"]}, {"labels": tagger(row["original_post"])}
+
+
+            num += 1
+            tags = tagger(row["original_post"], row, count)
+            DNS_Related = tags[1]
+            filter, labels = {"_id": row["_id"]}, {"labels": tags[0]}
+            collection.update_one(filter, {"$set": {"DNS_Related": DNS_Related}})
+            if not DNS_Related:
+                continue
+            if "Other Languages" in labels:
+                continue
+
+            dnsRelatedNum += 1
             collection.update_one(filter, {"$set": labels})
+
+    print(len(count))
+    print("Total DNS Related Post:", dnsRelatedNum)
+    return num
 
 
 def tokenize(content_string):
@@ -82,6 +102,8 @@ def tag2Records(content_dict, two_grams):
             result.add(record)
 
         abbreviation = record.split(" ")[0].lower()
+        if len(abbreviation) == 1:
+            continue
         if abbreviation in content_dict:
             result.add(record)
 
@@ -106,19 +128,31 @@ def tag3ServerLevels(content_dict, two_grams):
         result.append("TLD")
     if "sld" in content_dict or "second level" in two_grams:
         result.append("SLD")
-    if "subdomain" in content_dict or "sub domain" in two_grams:
+    if "subdomain" in content_dict or "subdomains" in content_dict or "sub domain" in two_grams:
         result.append("Sub-Domain")
 
     return result
 
 
 def tag4Security(content_dict):
-    keywords = ["security", "firewall", "block", "filter", "gateway", "ddos", "dos", "hijack",
-                "tunnel", "ssl", "tls", "ssl tls", "https", "malware", "attack", "prevent", "cert", "certificate", "expose",
-                "forbid", "authentication", "protect", "phishing", "captcha"]
-    for keyword in keywords:
+    keywordsT1 = ["block", "filter", "tunnel", "https", "prevent", "expose", "forbid", "captcha", "safety", "insurance",
+                  "guarantee", "warrant", "ward", "shelter", "trouble", "https"]
+
+    keywordsT2 = ["security", "secure", "insecurity", "firewall", "ddos", "dos", "hijack",
+                "ssl", "tls", "ssl tls", "malware", "attack", "cert", "certificate",
+                "authentication", "protect", "phishing"]
+
+    for keyword in keywordsT2:
         if keyword in content_dict:
             return True
+
+    hit = 0
+    for keyword in keywordsT1:
+        if keyword in content_dict:
+            hit += 1
+    if hit > 1:
+        return True
+
     return False
 
 
@@ -167,6 +201,11 @@ def tag7HTTPstatusCode(content_dict):
 
 def tag8ErrorCode(two_grams):
     result = []
+    valid_code = [1000, 1001, 1002, 1003, 1004, 1006, 1007, 1008, 1106,
+                  1009, 1010, 1011, 1012, 1013, 1014, 1015, 1016, 1018,
+                  1019, 1020, 1023, 1025, 1033, 1034, 1034, 1036, 1037,
+                  1040, 1041, 1101, 1102, 1104, 1200, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+
     for bigram in two_grams:
         if len(bigram) > 4 and bigram[:4] == "code":
             code = None
@@ -175,15 +214,42 @@ def tag8ErrorCode(two_grams):
             except:
                 pass
 
-            if code:
+            if code and code in valid_code:
                 result.append(bigram)
 
     return result
 
+def tag9Performance(content_dict, two_grams):
+    keywords = ["apo", "error", "perform", "performance", "traffic", "stress", "load", "speed", "slow"]
+    bigrams = ["stress testing", "stress test", "load testing", "load test"]
 
-def tagger(pure_content):
+    hit = 0
+    for kw in keywords:
+        if kw in content_dict:
+            hit += 1
+    if hit > 1:
+        return True
+
+    for bg in bigrams:
+        if bg in two_grams:
+            return True
+
+    return False
+
+
+def tagger(pure_content, row, count):
     labels = []
     content_dict, two_grams = tokenize(pure_content)
+
+    #0 Checking foreign languages
+    non_eng_count = 0
+    for token in content_dict:
+        if not isEng(token):
+            non_eng_count += 1
+
+    if non_eng_count >= 3:
+        labels.append("Other Languages")
+        categoryToPostNum["Other Languages"] += 1
 
     # 1.General
     if tag1GeneralDNS(content_dict):
@@ -233,13 +299,21 @@ def tagger(pure_content):
     # Temporarily disabled because of irrelevance for DNS
 
     # 8.Error Code
+    indi = -1
     for error_code in tag8ErrorCode(two_grams):
         labels.append(error_code)
+        indi = 1
+    if indi == 1:
+        categoryToPostNum["8.Error Code"] += 1
+
+    if tag9Performance(content_dict, two_grams):
+        labels.append("Performance")
+        categoryToPostNum["9.Performance"] += 1
 
     # Others
     if not labels:
         labels.append("Others")
-        categoryToPostNum["7.Others"] += 1
+        categoryToPostNum["Others"] += 1
 
     tagNum = len(labels)
     tagNumToPostNum[tagNum] += 1
@@ -247,21 +321,34 @@ def tagger(pure_content):
     for l in labels:
         tagToPostNum[l] += 1
 
+    result = [labels, True]
+    if "dns" not in content_dict and "DNS & Network" not in row["raw_tag"] and "1.1.1.1" not in row["raw_tag"]:
+        count.append(1)
+        result[1] = False
 
-    return labels
+    return result
 
+def isEng(s):
+    try:
+        s.encode(encoding='utf-8').decode('ascii')
+    except UnicodeDecodeError:
+        return False
+    else:
+        return True
 
 if __name__ == "__main__":
     lemmatizer = WordNetLemmatizer()
     tagNumToPostNum = defaultdict(int)
     tagToPostNum = defaultdict(int)
     categoryToPostNum = defaultdict(int)
-    start, end = 34, 84
-    main(start, end)
-    num = (end - start + 1) * 30
-    print("====================================================")
+
+    start, end = 100, 1099
+
+    num = main(start, end)
+    print("===========================`=========================")
     print("Total Number of Posts:", num)
     print("====================================================")
+
     print("Number of Tags \t\t\t Number of Posts")
     for tagNum in sorted(tagNumToPostNum.keys()):
         print(str(tagNum) + "\t\t\t" + str(tagNumToPostNum[tagNum]))
