@@ -7,8 +7,7 @@ def main(startPage, endPage):
     client = pymongo.MongoClient(host="128.195.180.83",
                                  port=27939,
                                  username="db_writer",
-                                 password="ucidsplab_dbwriter"
-                                 )
+                                 password="ucidsplab_dbwriter")
 
     db = client.cloudflare_crawled_data
 
@@ -19,7 +18,15 @@ def main(startPage, endPage):
         collection = db[col_name]
 
         for row in collection.find():
-
+            row["original_post"] = row["original_post"].replace("\n", " ") # replace the newline signal
+            row["original_post"] = row["title"].replace("-", " ").replace("_", " ") + ' '+row["original_post"]
+#             print(row)
+            for reply in row["replies"]:
+#                 print(reply)
+                for single_reply in row["replies"][reply]:
+#                     print(i)
+                    row["original_post"] += ' ' + single_reply["reply"]
+#             exit()
             if not row["DNS_Related"]:
                 continue
             if "Other Languages" in row["labels"]:
@@ -29,7 +36,10 @@ def main(startPage, endPage):
             if year != "2021" and year != "2020":
                 continue
 
-            print(row["_id"])
+            print(row["_id"], end="\r")
+#             print(row)
+#             print(row["original_post"])
+#             exit()
 
             tags = tagger(row["original_post"], row, count)
             if not tags:
@@ -44,7 +54,7 @@ def main(startPage, endPage):
     print("Total DNS Related Post:", dnsRelatedNum)
     return num
 
-
+# two_grams: Try each consecutive words and save them in a dict
 def tokenize(content_string):
     content_list = content_string.split(" ")
     content_dict, two_grams = {}, {}
@@ -64,6 +74,9 @@ def tokenize(content_string):
                 two_grams[two_gram] = 0
             two_grams[two_gram] += 1
     return content_dict, two_grams
+
+
+
 
 
 def lemma(word):
@@ -101,6 +114,8 @@ def tag1NetworkConnectivity(content_dict, two_grams):
     return False
 
 def tag2Management(content_dict, two_grams):
+#     keywords = ["registration", "registrar", "register", "nameserver", "nameservers", "account", "transfer",
+#                 "mydomain", "whois", "godaddy", "icann", "iana", "host"]
     keywords = ["registration", "registrar", "register", "nameserver", "nameservers", "account", "transfer",
                 "mydomain", "whois", "godaddy", "icann", "iana", "host"]
     bigrams = ["go daddy"]
@@ -144,7 +159,8 @@ def tag4Website(content_dict, two_grams):
 def tagger(pure_content, row, count):
     labels = []
     content_dict, two_grams = tokenize(pure_content)
-
+#     print(content_dict, '\n\n\n',two_grams)
+#     exit()
     if tag1NetworkConnectivity(content_dict, two_grams):
         labels.append("Network Connectivity")
     if tag2Management(content_dict, two_grams):
@@ -155,6 +171,9 @@ def tagger(pure_content, row, count):
         labels.append("Website")
 
     tagNum = len(labels)
+#     if tagNum == 0:
+#         print(row)
+#         exit()
     tagNumToPostNum[tagNum] += 1
 
     for l in labels:
@@ -172,10 +191,10 @@ if __name__ == "__main__":
     start, end = 100, 1354
 
     num = main(start, end)
-    print("===========================`=========================")
-    print("Total Number of Posts:", num)
+    print(tagNumToPostNum)
+#     print("===========================`=========================") # Jason: useless?
+#     print("Total Number of Posts:", num)
     print("====================================================")
-
     print("Number of Tags \t\t\t Number of Posts")
     for tagNum in sorted(tagNumToPostNum.keys()):
         print(str(tagNum) + "\t\t\t" + str(tagNumToPostNum[tagNum]))

@@ -91,37 +91,52 @@ def data_process():
     return corpus, vocab
 
 def data_generator(vocab, corpus):
-    vocabList = vocab.keys()
-    cv1 = CountVectorizer(vocabulary=vocabList, analyzer = 'word')
-    corpus_vocab_count_matrix = cv1.transform(corpus)
-    tfidf_transformer = TfidfTransformer(smooth_idf=True, use_idf=True)
-    tfidf_transformer.fit(corpus_vocab_count_matrix)
-    df_idf = pd.DataFrame(tfidf_transformer.idf_, index=cv1.get_feature_names_out(), columns=   ['idf-weights'])
-    df_idf = df_idf.sort_values(by=['idf-weights'])
+    vectorizer = TfidfVectorizer(min_df = 3, max_features = 10000)
 
-    articles_vocab_count_matrix = cv1.transform(corpus)
-    tfidf_matrix = tfidf_transformer.transform(articles_vocab_count_matrix)
-    tfidf_array = tfidf_matrix.toarray()
 
-    df = pd.DataFrame(tfidf_array[0], index=cv1.get_feature_names_out(), columns=['tfidf'])
-    df_descending = df.sort_values(by=['tfidf'], ascending=False)
-    # print(df_descending.head(10))
+# # vectorizer = TfidfVectorizer()
+    X = vectorizer.fit_transform(corpus)
+    tfidf_array = X
+    distance_array = pairwise_distances(X, metric='cosine')
 
-    distance_array = pairwise_distances(tfidf_array, metric='cosine')
+
+
+    # vocabList = vocab.keys()
+    # cv1 = CountVectorizer(vocabulary=vocabList, analyzer = 'word')
+    # corpus_vocab_count_matrix = cv1.transform(corpus)
+    # tfidf_transformer = TfidfTransformer(smooth_idf=True, use_idf=True)
+    # tfidf_transformer.fit(corpus_vocab_count_matrix)
+    # df_idf = pd.DataFrame(tfidf_transformer.idf_, index=cv1.get_feature_names_out(), columns=   ['idf-weights'])
+    # df_idf = df_idf.sort_values(by=['idf-weights'])
+
+    # articles_vocab_count_matrix = cv1.transform(corpus)
+    # tfidf_matrix = tfidf_transformer.transform(articles_vocab_count_matrix)
+    # tfidf_array = tfidf_matrix.toarray()
+
+    # df = pd.DataFrame(tfidf_array[0], index=cv1.get_feature_names_out(), columns=['tfidf'])
+    # df_descending = df.sort_values(by=['tfidf'], ascending=False)
+    # # print(df_descending.head(10))
+
+    # distance_array = pairwise_distances(tfidf_array, metric='cosine')
     # print("distance_array: ", distance_array.shape, distance_array)
     # exit()
     return distance_array, tfidf_array
 
 def model_training(distance_array, tfidf_array):
-    for eps in np.arange(0.5, 1, 0.1):
-        for min_simple in range(2,5,1):
-            clustering = DBSCAN(eps=eps, min_samples=min_simple).fit(tfidf_array)
-            core_samples_mask = np.zeros_like(clustering.labels_, dtype=bool)
-            core_samples_mask[clustering.core_sample_indices_] = True
-            labels = clustering.labels_
-            score = metrics.silhouette_score(distance_array, labels)
-            print(f"eps: {eps}, min_simple: {min_simple}, silhouette_score:{score}")
-            print(np.unique(labels, return_counts=True))
+    for eps in np.arange(1, 5, 1):
+        for min_simple in range(2,3,1):
+            try:
+                print(f"eps: {eps}, min_simple: {min_simple}")
+
+                clustering = DBSCAN(eps=eps, min_samples=min_simple).fit(distance_array)
+                core_samples_mask = np.zeros_like(clustering.labels_, dtype=bool)
+                core_samples_mask[clustering.core_sample_indices_] = True
+                labels = clustering.labels_
+                score = metrics.silhouette_score(distance_array, labels)
+                print(f"silhouette_score:{score}")
+                print(np.unique(labels, return_counts=True))
+            except Exception as e:
+                print(e)
 
 
 
