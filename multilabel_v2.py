@@ -50,6 +50,7 @@ def main(startPage, endPage):
             if not tags:
                 collection.update_one(filter, {"$set": {"labels_v2": ["Unclassified"]}})
                 collection.update_one(filter, {"$set": {"updated": True}})
+                tagNumToPostNum[0] += 1
                 continue
 
             #dnsRelatedNum += 1
