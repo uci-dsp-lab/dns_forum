@@ -21,11 +21,11 @@ TF-IDF was generated for each dataset and then classified by using DBSCAN and K-
 
 
 ## Data Storage Example
-![MongoDB](https://github.com/uci-dsp-lab/dns_forum/blob/main/mgdb_example.PNG)
+![MongoDB](https://github.com/uci-dsp-lab/dns_forum/blob/main/Images/mgdb_example.PNG)
 
 
 ## Classification Example
-![Classi](https://github.com/uci-dsp-lab/dns_forum/blob/main/visual_example.PNG)
+![Classi](https://github.com/uci-dsp-lab/dns_forum/blob/main/Images/visual_example.PNG)
 
 
 
