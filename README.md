@@ -28,9 +28,16 @@ TF-IDF was generated for each dataset and then classified by using DBSCAN and K-
 ![Classi](https://github.com/uci-dsp-lab/dns_forum/blob/main/Images/visual_example.PNG)
 
 
+## Link to Our Dataset
+* [Hosted by Zenodo][zenodo-url]
+
+
+
+<p align="right">(<a href="#top">Back to Top</a>)</p>
 
 [NLTK-url]: https://www.nltk.org/
 [BeautifulSoup-url]: https://beautiful-soup-4.readthedocs.io/en/latest/#
 [PyMongo-url]: https://pymongo.readthedocs.io/en/stable/
 [urllib-url]: https://urllib3.readthedocs.io/en/stable/
 [sklearn-url]: https://scikit-learn.org/stable/
+[zenodo-url]: https://zenodo.org/record/6859234#.YtYdWHbMKUm
